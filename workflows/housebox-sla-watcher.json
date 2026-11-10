@@ -1,0 +1,956 @@
+{
+  "name": "HouseBox — SLA Watcher (Fixed)1",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1088,
+        320
+      ],
+      "id": "8e3b75c9-a714-45c4-94f8-14abd337a32a",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "list",
+          "cachedResultName": "HouseBox — Support Logs"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Лист1"
+        },
+        "filtersUI": {
+          "values": []
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -880,
+        320
+      ],
+      "id": "481fefcb-5440-4d8d-b4d5-77a5f047b590",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst now = Date.now();\n\nconst truthy = value => ['true', 'yes', '1'].includes(String(value ?? '').trim().toLowerCase());\n// Закриті / виконані / скасовані звернення SLA-перевіркою не обробляються (префіксна перевірка: closed, закрито, закрыт, закрит, решено, вирішено, опрацьовано, обработано ...)\nconst closedStatusPattern = /^(clos|resolv|done|complet|finish|cancel|solv|закр|вирішен|решен|решён|розв|опрацьован|обработан|виконан|выполнен|скасован|отмен|завершен|завершён)/i;\nconst isClosedStatus = value => closedStatusPattern.test(String(value ?? '').trim());\n\nreturn rows\n  .filter(item => {\n    const r = item.json;\n    const slaText = String(r.sla_minutes ?? '').trim();\n    const sla = Number(slaText);\n    const created = new Date(r.date).getTime();\n    const category = String(r.category ?? '').trim().toLowerCase();\n\n    return String(r.email_id ?? '').trim() !== ''\n      && String(r.owner ?? '').trim() !== ''\n      && slaText !== ''\n      && Number.isFinite(sla) && sla > 0\n      && Number.isFinite(created)\n      && category !== 'spam'\n      && !isClosedStatus(r.status)\n      && !truthy(r.resolved)\n      && !truthy(r.processed);\n  })\n  .map(item => {\n    const r = item.json;\n    const deadline = new Date(r.date).getTime() + Number(r.sla_minutes) * 60000;\n    const overdue = now - deadline;\n    const level = String(r.escalation_level ?? '').trim().toUpperCase();\n    const l2Notified = truthy(r.escalation_notified);\n    let action = 'none';\n\n    if (overdue >= 0) {\n      if (!level && !truthy(r.sla_notified)) action = 'L0';\n      else if (level === 'L0' && overdue >= 30 * 60000) action = 'L1';\n      else if (level === 'L1' && overdue >= 90 * 60000 && !l2Notified) action = 'L2';\n    }\n\n    return {\n      json: {\n        ...r,\n        email_id: String(r.email_id).trim(),\n        should_notify_l0: action === 'L0',\n        should_notify_l1: action === 'L1',\n        should_notify_l2: action === 'L2',\n        next_escalation_action: action,\n        sla_deadline: new Date(deadline).toISOString(),\n        sla_overdue: overdue >= 0,\n        minutes_overdue: Math.max(0, Math.floor(overdue / 60000)),\n        checked_at: new Date(now).toISOString(),\n      },\n      pairedItem: item.pairedItem ?? { item: rows.indexOf(item) },\n    };\n  });"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        320
+      ],
+      "id": "551f07c7-8af6-4ca3-ad0f-1872c556aede",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "008d92b7-0d33-44b0-8502-4af30d8f3c1e",
+              "leftValue": "={{ $json.should_notify_l1 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -448,
+        192
+      ],
+      "id": "d3312096-c116-4629-b9e4-687e53ccd863",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "list",
+          "cachedResultName": "HouseBox — Support Logs"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Лист1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sla_notified": "TRUE",
+            "email_id": "={{ $('Code in JavaScript').item.json.email_id }}",
+            "escalation_level": "={{ 'L1' }}",
+            "escalation_notified": "FALSE"
+          },
+          "matchingColumns": [
+            "email_id"
+          ],
+          "schema": [
+            {
+              "id": "email_id",
+              "displayName": "email_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sender",
+              "displayName": "sender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reply_text",
+              "displayName": "reply_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requires_human",
+              "displayName": "requires_human",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_notified",
+              "displayName": "sla_notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "escalation_level",
+              "displayName": "escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        176
+      ],
+      "id": "adcb3609-01b9-4a09-96af-7369a3569b9a",
+      "name": "Append or update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b023606e-6c78-48d5-be96-f22243309fd1",
+              "leftValue": "={{ $json.should_notify_l2 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -448,
+        416
+      ],
+      "id": "261d09d6-14e7-4ec5-a530-643cfd4676f1",
+      "name": "if l2"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🚨 ПРОСРОЧКА SLA — HOUSEBOX  ⚠️ Обнаружено обращение, по которому истёк срок реакции!  📩 Тема: {{ $json.subject }} 👤 Клиент: {{ String($json.sender ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}  🔴 Приоритет: {{ $json.priority }} 📂 Категория: {{ $json.category }} 👨‍💼 Ответственный: {{ $json.owner }}  ⏱ SLA: {{ $json.sla_minutes }} минут 🕒 Дедлайн: {{ $json.sla_deadline }}  📝 Причина обращения: {{ $json.reasoning }}  ❗ Необходимо проверить статус обращения и принять меры.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -208,
+        176
+      ],
+      "id": "e63a3255-021a-49dd-8a0c-7348d0470de8",
+      "name": "if l1",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "ReportingBot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🚨 **ЭСКАЛАЦИЯ L2 — HOUSEBOX**\n\n🔴 SLA просрочен на 90 минут после дедлайна (порог L2).\n\n📩 **Тема:** {{ $json.subject || $json.Subject || 'Не указана' }}\n🆔 **Email ID:** {{ $json.email_id }}\n📂 **Категория:** {{ $json.category }}\n⚡ **Приоритет:** {{ $json.priority }}\n👤 **Ответственный:** {{ $json.owner }}\n⏱ **SLA:** {{ $json.sla_minutes }} мин.\n📅 **Дата обращения:** {{ $json.date }}\n\n❗ **Требуется срочное вмешательство руководителя.**\n\nПожалуйста, проверьте обращение и примите меры.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -208,
+        400
+      ],
+      "id": "ef2fd671-83b1-4b3e-86a7-8e1a099f4ae5",
+      "name": "if l22",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "ReportingBot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "list",
+          "cachedResultName": "HouseBox — Support Logs"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Лист1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email_id": "={{ $('Code in JavaScript').item.json.email_id }}",
+            "escalation_level": "={{ 'L2' }}",
+            "escalation_notified": "TRUE",
+            "sla_notified": "TRUE"
+          },
+          "matchingColumns": [
+            "email_id"
+          ],
+          "schema": [
+            {
+              "id": "email_id",
+              "displayName": "email_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sender",
+              "displayName": "sender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reply_text",
+              "displayName": "reply_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requires_human",
+              "displayName": "requires_human",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_notified",
+              "displayName": "sla_notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "escalation_level",
+              "displayName": "escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "escalation_notified",
+              "displayName": "escalation_notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        400
+      ],
+      "id": "12acd5f4-9d8c-4568-93e1-fd2c4aaf1063",
+      "name": "Append or update row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "09d57eec-ebb2-4d35-b460-ffd1ab385b91",
+              "leftValue": "={{ $json.should_notify_l0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -448,
+        32
+      ],
+      "id": "fa55bced-3063-403d-ba5a-b48643fe99f7",
+      "name": "If0"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=ПРОСРОЧКА SLA L0 - HOUSEBOX\n\nТема: {{ String($json.subject || 'Не указана').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\nEmail ID: {{ String($json.email_id || 'Не указан').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\nКлиент: {{ String($json.sender || 'Не указан').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\nКатегория: {{ String($json.category || 'Не указана').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\nПриоритет: {{ String($json.priority || 'Не указан').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\nОтветственный: {{ String($json.owner || 'Не назначен').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\nSLA: {{ $json.sla_minutes }} минут\nДата обращения: {{ String($json.date || 'Не указана').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\n\nСрок ответа нарушен. Проверьте обращение и примите меры.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -176,
+        16
+      ],
+      "id": "4c5fb72b-21e6-454e-884f-bcf3a535003a",
+      "name": "if l",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "ReportingBot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "list",
+          "cachedResultName": "HouseBox — Support Logs"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Лист1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sla_notified": "={{ true }}",
+            "email_id": "={{ $('Code in JavaScript').item.json.email_id }}",
+            "escalation_level": "={{ 'L0' }}",
+            "escalation_notified": "FALSE"
+          },
+          "matchingColumns": [
+            "email_id"
+          ],
+          "schema": [
+            {
+              "id": "email_id",
+              "displayName": "email_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sender",
+              "displayName": "sender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reply_text",
+              "displayName": "reply_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requires_human",
+              "displayName": "requires_human",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sla_notified",
+              "displayName": "sla_notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "escalation_level",
+              "displayName": "escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "escalation_notified",
+              "displayName": "escalation_notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1b753c47-f5a4-4313-90ff-a097b3c1ea7b",
+      "name": "Append or update row in sheet0",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If0",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "if l2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "if l1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if l2": {
+      "main": [
+        [
+          {
+            "node": "if l22",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if l1": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if l22": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If0": {
+      "main": [
+        [
+          {
+            "node": "if l",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if l": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "nodeGroups": []
+}
